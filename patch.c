@@ -10,11 +10,12 @@
 #include <string.h>
 
 // Information about the supported MacOS versions of this patch utility:
-// Right now we just support 12.4 (xnu-8020.121.3) on T6000 and T8101
-#define MACOS_VERSION "12.4"
+// Right now we just support 12.5.1 (xnu-8020.141.5~2)
+// We support 12.4 as well (`git checkout 12.4`)
+#define MACOS_VERSION "12.5.1"
 
-#define NAME_STRING_ORIGINAL "root:xnu-8020.121.3~4/DEVELOPMENT_ARM64_T"
-#define NAME_STRING_NEW "root:xnu-8020.121.3~4/PACMANPATCH_ARM64_T"
+#define NAME_STRING_ORIGINAL    "root:xnu-8020.141.5~2/DEVELOPMENT_ARM64_T"
+#define NAME_STRING_NEW         "root:xnu-8020.141.5~2/PACMANPATCH_ARM64_T"
 #define NAME_STRING_NUM_EXPECTED ((2))
 
 // General arm64/ macho stuff:

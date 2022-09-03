@@ -15,26 +15,26 @@ We want to do this by patching the kernel itself, not compiling a new kernel. Wh
 
 Solution is to patch `kernel.development.t8101` (Or whatever flavor your machine uses) such that all writes to `CNTKCTL_EL1` and `PMCR0_EL1` always set the correct bits.
 
-I searched through the kernelcache in Ghidra for any writes to those MSRs and traced through the kernel binary/ XNU source to find where the MSRs are set. I then hand-coded patches for the MacOS 12.4 (`xnu-8020.121.3~4`) `development` kernel that ships with the KDK (`21F79`).
+I searched through the kernelcache in Ghidra for any writes to those MSRs and traced through the kernel binary/ XNU source to find where the MSRs are set. I then hand-coded patches for the MacOS 12.4 (`xnu-8020.121.3~4`) `development` kernel that ships with the KDK (`21F79`). These patches might work for future/ past versions too.
 
 **Disclaimer**
 
 These patches might cause system instability, security issues, or crashes. Additionally, they intentionally make your system less secure by enabling userspace access to the high resolution timers. Proceed at your own risk!
 
 # Requirements
-This set of patches has only been tested on a Mac Mini (`t8101`) and an M1 Pro MacBook Pro (`t6000`), both running MacOS 12.4 (`xnu-8020.121.3` build `21F79`).
+This set of patches has only been tested on a Mac Mini (`t8101`) and an M1 Pro MacBook Pro (`t6000`), both running MacOS 12.4 (`xnu-8020.121.3` build `21F79`), plus an M1 Pro MacBook Pro (`t6000`) running MacOS 12.5.1 (`xnu-8020.141.5~2` build `21G83`).
 
 ## How To Install
 
-1. Make sure your Mac is running MacOS 12.4 `21F79`, which is the only currently supported version. (You can verify this with `sw_vers`). (Other versions might work too).
+1. Make sure your Mac is running MacOS 12.5.1 `21G83`, which is the latest supported version. (You can verify this with `sw_vers`). (Other versions might work too). (If you want an older version, check the git tags to see if your version is supported. Or just remove the version check in `patch.c` if you're feeling brave).
 1. Identify your machine architecture identifier by checking the version string with `uname -sra`. For example, if it contains `root:xnu-8020.121.3~4/RELEASE_ARM64_T8101`, then your machine is `t8101` (a Mac Mini).
-1. Download the KDK for MacOS 12.4 from the Apple Developer downloads section (you'll need an Apple ID but as of July 2022 you don't need a paid developer account) and install it.
-1. Copy `/Library/Developer/KDKs/KDK_12.4_21F79.kdk/System/Library/Kernels/kernel.development.t8101` to a folder somewhere.
+1. Download the KDK for your MacOS version from the Apple Developer downloads section (you'll need an Apple ID but as of July 2022 you don't need a paid developer account) and install it.
+1. Copy `/Library/Developer/KDKs/YOUR_KDK.kdk/System/Library/Kernels/kernel.development.YOUR_SOC` to a folder somewhere.
 1. Build PacmanPatcher with `make` (inside of the `PacmanPatcher` directory).
 1. Run PacmanPatcher with `./patch [kernel to patch]`. Note: the binary will be updated in-place!
 1. Recompile the kernelcache and boot the new kernel (see [booting the patched kernel](#booting-the-patched-kernel))
 
-Instruction TLDR (for `t8101` machines aka Mac Mini, replace `t8101` with your arch version):
+Instruction TLDR (for MacOS 12.4 `t8101` machines aka Mac Mini, replace `t8101` with your arch version):
 
 ```
 git clone git@github.com:jprx/PacmanPatcher.git
@@ -75,15 +75,20 @@ Finally, open a terminal and run `uname -sra`. You should see the following:
 
 Give it a test by running `./test_patch`!
 
+**Important Note**
+Any kernel extensions you have installed will be compiled into the newly built kernelcache. So, if you have any kexts you will be updating soon (eg. if you are running [PacmanKit](https://github.com/jprx/PacmanKit)) make sure to leave those kexts out of the kernelcache build invocation.
+
 # Patch Sets
 
 Here's a brief overview of what the patches do. See `patch.c` for info on each one.
 
 ## Version String
 
-We replace the version string `root:xnu-8020.121.3~4/DEVELOPMENT_ARM64_T` with `root:xnu-8020.121.3~4/PACMANPATCH_ARM64_T`. You can make this whatever you like.
+We replace the version string `root:xnu-8020.141.5~2/DEVELOPMENT_ARM64_T` with `root:xnu-8020.141.5~2/PACMANPATCH_ARM64_T`. You can make this whatever you like.
 
-By default, the patch utility will stop if it doesn't detect the development version of the MacOS 12.4 kernel (`xnu-8020.121.3`). You can comment that out if you want to try this on a different kernel version.
+By default, the patch utility will stop if it doesn't detect the development version of the MacOS 12.5.1 kernel (`xnu-8020.141.5~2`). You can comment that out if you want to try this on a different kernel version.
+
+You can also check the git tags to see if your older MacOS version is supported by PacmanPatcher.
 
 ## CNTKCTL Patch Set
 
