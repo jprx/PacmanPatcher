@@ -13,21 +13,37 @@ References:
 
 We want to do this by patching the kernel itself, not compiling a new kernel. While it is possible to compile XNU and make these changes ourselves, we want to maintain all offsets such that any code reuse chains / hardcoded symbols will remain constant. Additionally, I have found the KDK development kernel to be more stable than the development kernel I built from scratch.
 
-Solution is to patch `kernel.development.t8101` (Or whatever flavor your machine uses) such that all writes to `CNTKCTL_EL1` and `PMCR0_EL1` always set the correct bits.
+Solution is to patch `kernel.development.*` such that all writes to `CNTKCTL_EL1` and `PMCR0_EL1` always set the correct bits.
 
 I searched through the kernelcache in Ghidra for any writes to those MSRs and traced through the kernel binary/ XNU source to find where the MSRs are set. I then hand-coded patches for the MacOS 12.4 (`xnu-8020.121.3~4`) `development` kernel that ships with the KDK (`21F79`). These patches might work for future/ past versions too.
 
-**Disclaimer**
+### Disclaimer
 
 These patches might cause system instability, security issues, or crashes. Additionally, they intentionally make your system less secure by enabling userspace access to the high resolution timers. Proceed at your own risk!
 
-# Requirements
-This set of patches has only been tested on a Mac Mini (`t8101`) and an M1 Pro MacBook Pro (`t6000`), both running MacOS 12.4 (`xnu-8020.121.3` build `21F79`), plus an M1 Pro MacBook Pro (`t6000`) running MacOS 12.5.1 (`xnu-8020.141.5~2` build `21G83`).
+# Note For Sonoma 14.0+
+If you're trying to boot a hand-built kernel collection on MacOS 14.0+, you may encounter kernel panics during early boot.
+This may happen even without PacmanPatcher's patches applied (just trying to boot the KDK kernel).
+
+On MacOS 14.1.2 (`23B92`) development kernel for `t6000` I observed the following panic:
+`amcc_rorgn_ppl_amcc.c:550 Assertion failed: !write_disabled && !locked`.
+
+This panic occurs in code that is not part of the current open-source kernel.
+You can fix this panic by passing `-unsafe_kernel_text` to the boot args:
+
+```
+sudo nvram boot-args="-unsafe_kernel_text"
+```
+
+This may fix kernel panics on other Sonoma versions as well.
+
+If you set your boot args to include the verbose flag (`sudo nvram boot-args="-v"`) you will be able to observe the panic trace, including the panic reason string.
+Otherwise your Mac will freeze on the Apple with a progress bar that doesn't move and stay there until the watchdog timer fires.
 
 ## How To Install
 
-1. Make sure your Mac is running MacOS 12.5.1 `21G83`, which is the latest supported version. (You can verify this with `sw_vers`). (Other versions might work too). (If you want an older version, check the git tags to see if your version is supported. Or just remove the version check in `patch.c` if you're feeling brave).
-1. Identify your machine architecture identifier by checking the version string with `uname -sra`. For example, if it contains `root:xnu-8020.121.3~4/RELEASE_ARM64_T8101`, then your machine is `t8101` (a Mac Mini).
+1. Make sure your Mac is running MacOS 14.1.2 `23B92`, which is the latest supported version. (You can verify this with `sw_vers`). (Other versions might work too). (If you want an older version, check the git tags to see if your version is supported. Or just remove the version check in `patch.c` if you're feeling brave).
+1. Identify your machine architecture identifier by checking the version string with `uname -v`. For example, if it contains `root:xnu-8020.121.3~4/RELEASE_ARM64_T8101`, then your machine is `t8101` (a Mac Mini).
 1. Download the KDK for your MacOS version from the Apple Developer downloads section (you'll need an Apple ID but as of July 2022 you don't need a paid developer account) and install it.
 1. Copy `/Library/Developer/KDKs/YOUR_KDK.kdk/System/Library/Kernels/kernel.development.YOUR_SOC` to a folder somewhere.
 1. Build PacmanPatcher with `make` (inside of the `PacmanPatcher` directory).
@@ -57,7 +73,14 @@ kmutil create -a arm64e -z -v -s none -n boot -k `pwd`/YOUR_PATCHED_KERNEL_MACHO
 
 Your resulting kernelcache will be called `patched.kc.development`.
 
-Then, boot into 1TR recovery mode (shut down -> turn on and hold power button -> options) and open a Terminal (Utilities -> Terminal) and run:
+Then, boot into 1TR recovery mode (shut down -> turn on and hold power button -> options) and open a Terminal (Utilities -> Terminal).
+
+If you are using FileVault, use `diskutil apfs unlockVolume diskXsY`, where `X` and `Y` are replaced with the identifiers of your disk (probably `disk3s5`).
+You can also open the Startup Security Policy window and unlock your drive via the GUI before opening the terminal to update the kernelcache.
+You will see your encrypted volume- click the option to unlock it and enter your password, and then close Startup Security Policy.
+Your volume is now accessible from the Terminal.
+
+Next run the following to configure the kernelcache:
 
 ```
 kmutil configure-boot -v /Volumes/YOUR_VOLUME -c /Volumes/YOUR_VOLUME/PATH/TO/KERNELCACHE/patched.kc.development
@@ -67,7 +90,7 @@ and reboot.
 
 (Your volume name is probably `MacintoshHD`).
 
-Finally, open a terminal and run `uname -sra`. You should see the following:
+Finally, open a terminal and run `uname -v`. You should see the following:
 
 ```
 ...root:xnu-8020.121.3~4/PACMANPATCH_ARM64_T...
