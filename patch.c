@@ -10,9 +10,9 @@
 #include <string.h>
 
 // Information about the supported MacOS versions of this patch utility:
-#define MACOS_VERSION "14.1.2"
-#define NAME_STRING_ORIGINAL    "root:xnu-10002.41.9~6/DEVELOPMENT_ARM64_T"
-#define NAME_STRING_NEW         "root:xnu-10002.41.9~6/PACMANPATCH_ARM64_T"
+#define MACOS_VERSION "14.3"
+#define NAME_STRING_ORIGINAL    "root:xnu-10002.81.5~7/DEVELOPMENT_ARM64_T"
+#define NAME_STRING_NEW         "root:xnu-10002.81.5~7/PACMANPATCH_ARM64_T"
 #define NAME_STRING_NUM_EXPECTED ((2))
 
 // General arm64/ macho stuff:
