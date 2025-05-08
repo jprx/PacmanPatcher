@@ -1,177 +1,119 @@
 # PacmanPatcher
-We want to turn on the Apple PMC registers (specifically acccess `PMC0` or `S3_2_c15_c0_0`) from userspace.
 
-This is controlled by the following bits:
+PacmanPatcher patches XNU to enable two features in EL0:
+- Access to the Apple performance counter PMC registers (specifically `PMC0` / `S3_2_c15_c0_0`).
+- Ability to use data cache maintenance instructions (eg. the ability to use `dc civac`).
 
-* `CNTKCTL_EL1.EL0PTEN` (bit 9) should be `1`
-* `CNTKCTL_EL1.EL0VTEN` (bit 8) should be `1`
-* `PMCR0_EL1` should be masked with `PMCR0_USEREN_EN` (bit 30 should be `1`)
+After patching your kernel, you'll be able to read the performance counters and flush the cache from EL0.
 
-References:
-* `osfmk/arm64/monotonic_arm64.c`
-* https://developer.arm.com/documentation/ddi0595/2020-12/AArch64-Registers/CNTKCTL-EL1--Counter-timer-Kernel-Control-register
+# Supported Systems
+Latest tested XNU: `xnu-11417.121.6` / macOS 15.5 RC1 / 24F74
 
-We want to do this by patching the kernel itself, not compiling a new kernel. While it is possible to compile XNU and make these changes ourselves, we want to maintain all offsets such that any code reuse chains / hardcoded symbols will remain constant. Additionally, I have found the KDK development kernel to be more stable than the development kernel I built from scratch.
+Tested configurations:
 
-Solution is to patch `kernel.development.*` such that all writes to `CNTKCTL_EL1` and `PMCR0_EL1` always set the correct bits.
+| SoC   | System         | Host OS         | Working? |
+|-------|----------------|-----------------|----------|
+| T8132 | M4 Mac Mini    | 15.1 (24B2083)  |    ✅    |
+| T6000 | M1 MacBook Pro | 15.5 RC (24F74) |    ✅    |
+| T8101 | M1 Mac Mini    | 12.4 (21F79)    |    ✅    |
 
-I searched through the kernelcache in Ghidra for any writes to those MSRs and traced through the kernel binary/ XNU source to find where the MSRs are set. I then hand-coded patches for the MacOS 12.4 (`xnu-8020.121.3~4`) `development` kernel that ships with the KDK (`21F79`). These patches might work for future/ past versions too.
+# Usage
+
+### Getting Files
+1. Download the KDK matching your Mac from Apple.
+   - Use `sw_vers` to get your version (eg. `24F74`).
+1. Get your SOC with `uname -v`. It's the last part of the XNU version string.
+   -  Example: `root:xnu-8020.121.3~4/RELEASE_ARM64_T8101`'s SOC is `T8101`.
+1. Grab a copy of `/Library/Developer/KDKs/YOUR_KDK.kdk/System/Library/Kernels/kernel.development.YOUR_SOC`.
+   - This is the kernel we'll be patching.
+
+### Patching the Kernel
+1. In this folder, `make`
+1. `./patch [kernel]`
+   - Note that the kernel will be patched in-place.
+   - You can ignore most `"Warning: Found fewer hits than expected"` warnings, as not all patch sets apply to all SoCs (meaning some of the patch sets will have 0 matches in your kernel).
+   - I would test the patches first and debug using the warnings later if things don't work on the first try.
+1. Make a kernel collection with:
+
+```
+kmutil create -a arm64e -z -v -s none -n boot -k YOUR_KERNEL -B patched.kc -V development -x $(kmutil inspect -V release --no-header | awk '{print " -b "$1; }')
+```
+
+### Booting the Kernel
+1. Shut down your Mac.
+1. Boot it up while holding down the power button until you see the options menu.
+   - This is called "one true recovery" or 1TR.
+1. Select options, then go to Utilities -> Terminal.
+1. If using FileVault, unlock your disk with `diskutil apfs unlockVolume diskXsY`, where X and Y are replaced with the identifiers of your disk (probably `disk3s5`)
+   - You can do this via the GUI as well by going to Utilities -> Startup Security Utility and clicking the unlock button.
+1. Tell iBoot to load your kernel collection with: `kmutil configure-boot -v /Volumes/YOUR_VOLUME -c /Volumes/YOUR_VOLUME/PATH/TO/KERNELCACHE/patched.kc.development`
+
+### Checking if it Worked
+1. You should be able to restart your Mac and boot it like normal.
+1. Run `uname -v`, you should see something like `root:xnu-8020.121.3~4/PACMANPATCH_ARM64_T...`
+1. Use `./test_pmc` and `./test_flush` to confirm the patches are working.
+
+### Reverting to Normal
+1. Boot into 1TR again (turn on while holding the power button, then "Options").
+1. Go to Utilities -> Startup Security Utility and select "Full Security".
+1. Reboot.
+
+**Note**: If your kernel fails to boot, you'll end up in a recovery environment that looks a lot like 1TR but isn't.
+You won't be able to change anything from here- don't panic!
+The only way we can change the startup security policy is in 1TR mode, which can only be entered by shutting the Mac down and then restarting while physically holding the power button.
+
+Just shut the Mac down and then start it up while holding the power button, and try again.
+
+### Troubleshooting
+- If your Mac hangs / crashes when trying to boot the patched kernel, try setting the `-unsafe_kernel_text` boot argument (`sudo nvram boot-args="-unsafe_kernel_text"`).
+   - You'll need to set this from a booted macOS, it won't work in recovery mode.
+   - If your Mac is boot looping with the patched kernel, first uninstall it (see "reverting to normal" above), then try this.
+- You may need to enable boot args with `bputil -a` in 1TR.
+- `csrutil disable` in 1TR turns off SIP which can be useful here too.
+- Adding a `-v` boot arg will give you a verbose boot log which can be helpful for debugging.
+- Any kernel extensions you have installed will be compiled into the newly built kernelcache. So, if you have any kexts you will be updating soon (eg. if you are running [PacmanKit](https://github.com/jprx/PacmanKit)) make sure to leave those kexts out of the kernelcache build invocation.
 
 ### Disclaimer
 
 These patches might cause system instability, security issues, or crashes. Additionally, they intentionally make your system less secure by enabling userspace access to the high resolution timers. Proceed at your own risk!
 
-# Note For Sonoma 14.0+
-If you're trying to boot a hand-built kernel collection on MacOS 14.0+, you may encounter kernel panics during early boot.
-This may happen even without PacmanPatcher's patches applied (just trying to boot the KDK kernel).
+# What we are patching
+See [patches](PATCHES.md) for explanations of what these patches are doing at the binary level.
+Here is a high-level description of what we're doing.
 
-On MacOS 14.1.2 (`23B92`) development kernel for `t6000` I observed the following panic:
-`amcc_rorgn_ppl_amcc.c:550 Assertion failed: !write_disabled && !locked`.
+Access to the performance counters is allowed when:
 
-This panic occurs in code that is not part of the current open-source kernel.
-You can fix this panic by passing `-unsafe_kernel_text` to the boot args:
+ - `PMCR0_EL1` has bit 30 (`PMCR0_USEREN_EN`) set to `1`.
 
-```
-sudo nvram boot-args="-unsafe_kernel_text"
-```
+Cache maintenance instructions (XNU calls these "DC MVA ops") are allowed when:
 
-This may fix kernel panics on other Sonoma versions as well.
+ - `SCTLR.UCI` (bit 26) is `1` (XNU default).
+ - `SCTLR.DZE` (bit 14) is `1` (XNU default).
+ - On P-Cores pre-H16, `HID4` has bit 11 set to `0` (mask with `~0x800`).
+ - On E-Cores pre-H16, `EHID4` has bit 11 set to `0` (mask with `~0x800`).
+ - On H16 cores, `ACFG_EL1` has bit 3 set to `0` (mask with `~0x08`).
 
-If you set your boot args to include the verbose flag (`sudo nvram boot-args="-v"`) you will be able to observe the panic trace, including the panic reason string.
-Otherwise your Mac will freeze on the Apple with a progress bar that doesn't move and stay there until the watchdog timer fires.
+### Register Map
+| Register Name |     Encoding     |          Use          |
+|---------------|------------------|-----------------------|
+| `EHID4`       | `S3_0_C15_C4_1`  | DC MVA Ops on E-Cores |
+| `HID4`        | `S3_0_C15_C4_0`  | DC MVA Ops on P-Cores |
+| `ACFG_EL1`    | `S3_4_C15_C12_0` | DC MVA Ops for H16    |
+| `PMCR0`       | `S3_1_C15_C0_0`  | Controls PMC Regs     |
+| `PMC0`        | `S3_2_C15_C0_0`  | Cycle Counter         |
+| `PMC1`        | `S3_2_C15_C1_0`  | Instruction Counter   |
 
-## How To Install
+References for PMCs:
+ - "PMC[0-1] are the 48/64-bit fixed counters -- `S3_2_C15_C0_0` is cycles and `S3_2_C15_C1_0` is instructions" from: [monotonic_arm64.c](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.101.15/osfmk/arm64/monotonic_arm64.c#L77)
+ - [`enable_counter` in `kpc.c`](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.101.15/osfmk/arm64/kpc.c#L267)
+ - [`PMCR0_USEREN_ENABLE_MASK`](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.101.15/osfmk/arm64/kpc.c#L100)
 
-1. Make sure your Mac is running MacOS 14.1.2 `23B92`, which is the latest supported version. (You can verify this with `sw_vers`). (Other versions might work too). (If you want an older version, check the git tags to see if your version is supported. Or just remove the version check in `patch.c` if you're feeling brave).
-1. Identify your machine architecture identifier by checking the version string with `uname -v`. For example, if it contains `root:xnu-8020.121.3~4/RELEASE_ARM64_T8101`, then your machine is `t8101` (a Mac Mini).
-1. Download the KDK for your MacOS version from the Apple Developer downloads section (you'll need an Apple ID but as of July 2022 you don't need a paid developer account) and install it.
-1. Copy `/Library/Developer/KDKs/YOUR_KDK.kdk/System/Library/Kernels/kernel.development.YOUR_SOC` to a folder somewhere.
-1. Build PacmanPatcher with `make` (inside of the `PacmanPatcher` directory).
-1. Run PacmanPatcher with `./patch [kernel to patch]`. Note: the binary will be updated in-place!
-1. Recompile the kernelcache and boot the new kernel (see [booting the patched kernel](#booting-the-patched-kernel))
 
-Instruction TLDR (for MacOS 12.4 `t8101` machines aka Mac Mini, replace `t8101` with your arch version):
+References for *HID/ ACFG:
+ - Reverse engineering kernel support libraries (see [DC_OPS.md](DC_OPS.md))
+ - [`ENABLE_DC_MVA_OPS` macro in XNU](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.101.15/osfmk/arm64/caches_asm.s#L181)
 
-```
-git clone git@github.com:jprx/PacmanPatcher.git
-cd PacmanPatcher
-make
-cp /Library/Developer/KDKs/KDK_12.4_21F79.kdk/System/Library/Kernels/kernel.development.t8101 kernel.patched.t8101
-./patch kernel.patched.t8101
-kmutil create -a arm64e -z -v -s none -n boot -k `pwd`/kernel.patched.t8101 -B patched.kc -V development -x $(kmutil inspect -V release --no-header | awk '{print " -b "$1; }')
-```
+# Documentation
+- See [PATCHES](PATCHES.md) for an explanation of how we modify XNU to get the values we want into these registers.
+- See [DC_OPS](DC_OPS.md) for an explanation of how the cache maintenance operations work on different SoCs.
 
-Then follow the instructions in [booting the patched kernel](#booting-the-patched-kernel).
-
-## Booting the patched kernel
-
-Once you've got the patched kernel binary, build the kernelcache with:
-
-```
-kmutil create -a arm64e -z -v -s none -n boot -k `pwd`/YOUR_PATCHED_KERNEL_MACHO -B patched.kc -V development -x $(kmutil inspect -V release --no-header | awk '{print " -b "$1; }')
-```
-
-Your resulting kernelcache will be called `patched.kc.development`.
-
-Then, boot into 1TR recovery mode (shut down -> turn on and hold power button -> options) and open a Terminal (Utilities -> Terminal).
-
-If you are using FileVault, use `diskutil apfs unlockVolume diskXsY`, where `X` and `Y` are replaced with the identifiers of your disk (probably `disk3s5`).
-You can also open the Startup Security Policy window and unlock your drive via the GUI before opening the terminal to update the kernelcache.
-You will see your encrypted volume- click the option to unlock it and enter your password, and then close Startup Security Policy.
-Your volume is now accessible from the Terminal.
-
-Next run the following to configure the kernelcache:
-
-```
-kmutil configure-boot -v /Volumes/YOUR_VOLUME -c /Volumes/YOUR_VOLUME/PATH/TO/KERNELCACHE/patched.kc.development
-```
-
-and reboot.
-
-(Your volume name is probably `MacintoshHD`).
-
-Finally, open a terminal and run `uname -v`. You should see the following:
-
-```
-...root:xnu-8020.121.3~4/PACMANPATCH_ARM64_T...
-```
-
-Give it a test by running `./test_patch`!
-
-**Important Note**
-Any kernel extensions you have installed will be compiled into the newly built kernelcache. So, if you have any kexts you will be updating soon (eg. if you are running [PacmanKit](https://github.com/jprx/PacmanKit)) make sure to leave those kexts out of the kernelcache build invocation.
-
-# Patch Sets
-
-Here's a brief overview of what the patches do. See `patch.c` for info on each one.
-
-## Version String
-
-We replace the version string `root:xnu-8020.141.5~2/DEVELOPMENT_ARM64_T` with `root:xnu-8020.141.5~2/PACMANPATCH_ARM64_T`. You can make this whatever you like.
-
-By default, the patch utility will stop if it doesn't detect the development version of the MacOS 12.5.1 kernel (`xnu-8020.141.5~2`). You can comment that out if you want to try this on a different kernel version.
-
-You can also check the git tags to see if your older MacOS version is supported by PacmanPatcher.
-
-## CNTKCTL Patch Set
-
-This sets bits 8 and 9 in `CNTKCTL_EL1`.
-
-```
-Original patterns look something like:
-
-(some branch)
-mrs x9,cntkctl_el1
-orr x8,x9,x8, LSL #0x4
-orr x8,x8,#0xf
-msr cntkctl_el1,x8
-
-We want bits 8 and 9 set too. Need another instruction
-so we just overwrite the previous branch.
-
-In all cases (as of MacOS 12.4) that this occurs, the proceeding inst
-is a branch that leads to a kernel panic condition. We never will hit that
-panic (in good code) so we can assume that branch never runs and just overwrite it.
-
-Not ideal, but then again, we are editing the kernel by hand here...
-
-mrs x9,cntkctl_el1
-orr x8,x9,x8, LSL #0x4
-orr x8,x8,#0xf
-orr x8,x8,#0x3 LSL #0x8
-msr cntkctl_el1,x8
-```
-
-## PMCR0 Patch Set 1
-
-```
-Sometimes we write to PMCR0 with the following pattern:
-08 80 86 52  mov   w8,#0x3400
-08 e0 a0 72  movk  w8,#0x700, LSL #16
-08 f0 19 d5  msr   sreg(0x3, 0x1, c0xf, c0x0, 0x0),x8
-
-We need bit 30 set, so we can just do this (1 byte patch):
-
-08 80 86 52  mov   w8,#0x3400
-08 e0 a8 72  movk  w8,#0x4700, LSL #16
-08 f0 19 d5  msr   sreg(0x3, 0x1, c0xf, c0x0, 0x0),x8
-```
-
-## PMCR0 Patch Set 2
-
-```
-Sometimes XNU does the following, which eventually loads x19 into PMCR0:
-
-This is the most dangerous patch we support as it doesn't explicitly include a
-write to the register in question. Future versions MAY break this!
-
-Proceed with caution here.
-
-73 80 86 52 mov  w19,#0x3403
-13 e0 a0 72 movk w19,#0x700, LSL #16
-
-We need bit 30 set, so we can just do this:
-
-73 80 86 52 mov  w19,#0x3403
-08 e0 a8 72 movk w8,#0x4700, LSL #16
-```

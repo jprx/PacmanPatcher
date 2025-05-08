@@ -10,9 +10,8 @@
 #include <string.h>
 
 // Information about the supported MacOS versions of this patch utility:
-#define MACOS_VERSION "14.3"
-#define NAME_STRING_ORIGINAL    "root:xnu-10002.81.5~7/DEVELOPMENT_ARM64_T"
-#define NAME_STRING_NEW         "root:xnu-10002.81.5~7/PACMANPATCH_ARM64_T"
+#define NAME_STRING_ORIGINAL    "DEVELOPMENT_ARM64_T"
+#define NAME_STRING_NEW         "PACMANPATCH_ARM64_T"
 #define NAME_STRING_NUM_EXPECTED ((2))
 
 // General arm64/ macho stuff:
@@ -21,134 +20,144 @@
 #define MACHO_HEADER_LEN ((4))
 
 // --------------- Begin patch set 1 ---------------
-
-#define CNTKCTL_PATCH_NAME "CNTKCTL"
-
 /*
-Original patterns look something like:
-
-(some branch)
-mrs x9,cntkctl_el1
-orr x8,x9,x8, LSL #0x4
-orr x8,x8,#0xf
-msr cntkctl_el1,x8
-*/
-#define CNTKCTL_PATCH_SET \
-	"\x09\xe1\x38\xd5" \
-	"\x28\x11\x08\xaa" \
-	"\x08\x0d\x40\xb2" \
-	"\x08\xe1\x18\xd5"
-
-#define CNTKCTL_PATCH_LEN ((4 * ARM64_INST_LEN))
-
-/*
-We want bits 8 and 9 set too. Need another instruction
-so we just overwrite the previous branch (CNTKCTL_PATCH_OFFSET is -4)
-
-In all cases (as of MacOS 12.4) that this occurs, the proceeding inst
-is a branch that leads to a kernel panic condition. We never will hit that
-panic (in good code) so we can assume that branch never runs and just overwrite it.
-
-Not ideal, but then again, we are editing the kernel by hand here...
-
-mrs x9,cntkctl_el1
-orr x8,x9,x8, LSL #0x4
-orr x8,x8,#0xf
-orr x8,x8,#0x3 LSL #0x8
-msr cntkctl_el1,x8
-*/
-#define CNTKCTL_PATCH_WITH \
-	"\x09\xe1\x38\xd5" \
-	"\x28\x11\x08\xaa" \
-	"\x08\x0d\x40\xb2" \
-	"\x08\x05\x78\xb2" \
-	"\x08\xe1\x18\xd5"
-
-#define CNTKCTL_PATCH_WITH_LEN ((5 * ARM64_INST_LEN))
-
-#define CNTKCTL_PATCH_OFFSET ((-4))
-
-// wfe_timeout_init, arm_init_idle_cpu, arm_init_cpu, and arm_init
-#define CNTKCTL_PATCH_EXPECTED ((4))
-
-// --------------- Begin patch set 2 ---------------
-
-/*
-Sometimes we write to PMCR0 with the following pattern:
+XNU writes to PMCR0 with the following pattern:
 08 80 86 52  mov   w8,#0x3400
 08 e0 a0 72  movk  w8,#0x700, LSL #16
 08 f0 19 d5  msr   sreg(0x3, 0x1, c0xf, c0x0, 0x0),x8
 */
-#define PMCR0_PATCH_SET_1_FIND "\x08\x80\x86\x52\x08\xe0\xa0\x72\x08\xf0\x19\xd5"
+#define PMCR0_PATCH_SET_1_FIND \
+	"\x08\x80\x86\x52" \
+	"\x08\xe0\xa0\x72" \
+	"\x08\xf0\x19\xd5"
 
 #define PMCR0_PATCH_SET_1_LEN ((3 * ARM64_INST_LEN))
 
 /*
-We need bit 30 set, so we can just do this (1 byte patch):
-
+Make sure bit 30 is set:
 08 80 86 52  mov   w8,#0x3400
 08 e0 a8 72  movk  w8,#0x4700, LSL #16
 08 f0 19 d5  msr   sreg(0x3, 0x1, c0xf, c0x0, 0x0),x8
 */
-#define PMCR0_PATCH_SET_1_WITH "\x08\x80\x86\x52\x08\xe0\xa8\x72\x08\xf0\x19\xd5"
+#define PMCR0_PATCH_SET_1_WITH \
+	"\x08\x80\x86\x52" \
+	"\x08\xe0\xa8\x72" \
+	"\x08\xf0\x19\xd5"
 
 #define PMCR0_PATCH_SET_1_WITH_LEN ((3 * ARM64_INST_LEN))
 
-#define PMCR0_PATCH_SET_1_NAME "PMCR0 Patch Set 1"
+#define PMCR0_PATCH_SET_1_NAME "PMCR0 Patch"
 
 #define PMCR0_PATCH_SET_1_NUM_EXPECTED ((6))
 
+// --------------- Begin patch set 2 ---------------
+// Body of disable_dc_mva_ops on T8132
+/*
+0ffc3cd5   mrs     x15, acfg_el1
+ef017db2   orr     x15, x15, #0x8
+0ffc1cd5   msr     acfg_el1, x15
+*/
+#define ACFG_PATCH_SET \
+	"\x0f\xfc\x3c\xd5" \
+	"\xef\x01\x7d\xb2" \
+	"\x0f\xfc\x1c\xd5"
+
+#define ACFG_PATCH_SET_LEN ((3 * ARM64_INST_LEN))
+
+/*
+Make sure bit 3 is 0
+0ffc3cd5   mrs     x15, acfg_el1
+eff97c92   and     x15, x15, #0xfffffffffffffff7
+0ffc1cd5   msr     acfg_el1, x15
+*/
+#define ACFG_PATCH_SET_WITH \
+	"\x0f\xfc\x3c\xd5" \
+	"\xef\xf9\x7c\x92" \
+	"\x0f\xfc\x1c\xd5"
+
+#define ACFG_PATCH_SET_WITH_LEN ((ACFG_PATCH_SET_LEN))
+
+#define ACFG_PATCH_SET_NUM_EXPECTED ((2))
+
+#define ACFG_PATCH_SET_NUM_NAME "ACFG_EL1 Patch"
+
 // --------------- Begin patch set 3 ---------------
 
+// Body of disable_dc_mva_ops on cores using HID4/EHID4
 /*
-Sometimes XNU does the following, which eventually loads x19 into PMCR0:
-
-This is the most dangerous patch we support as it doesn't explicitly include a
-write to the register in question. Future versions MAY break this!
-
-Proceed with caution here.
-
-73 80 86 52 mov  w19,#0x3403
-13 e0 a0 72 movk w19,#0x700, LSL #16
+2ef438d5   mrs     x14, s3_0_c15_c4_1
+02000014   b       0xfffffe000734561c
+0ef438d5   mrs     x14, hid4
+ce0175b2   orr     x14, x14, #0x800
 */
-#define PMCR0_PATCH_SET_2_FIND "\x73\x80\x86\x52\x13\xe0\xa0\x72"
+#define HID_PATCH_SET1 \
+	"\x2e\xf4\x38\xd5" \
+	"\x02\x00\x00\x14" \
+	"\x0e\xf4\x38\xd5" \
+	"\xce\x01\x75\xb2"
 
-#define PMCR0_PATCH_SET_2_LEN ((2 * ARM64_INST_LEN))
+#define HID_PATCH_SET1_LEN ((4 * ARM64_INST_LEN))
 
 /*
-We need bit 30 set, so we can just do this (1 byte patch):
-
-73 80 86 52 mov  w19,#0x3403
-08 e0 a8 72 movk w8,#0x4700, LSL #16
+Make sure bit 11 is 0
+2ef438d5   mrs     x14, s3_0_c15_c4_1
+02000014   b       0xfffffe000734561c
+0ef438d5   mrs     x14, hid4
+cef97492   and     x14, x14, #0xfffffffffffff7ff
 */
-#define PMCR0_PATCH_SET_2_WITH "\x73\x80\x86\x52\x08\xe0\xa8\x72"
+#define HID_PATCH_SET1_WITH \
+	"\x2e\xf4\x38\xd5" \
+	"\x02\x00\x00\x14" \
+	"\x0e\xf4\x38\xd5" \
+	"\xce\xf9\x74\x92"
 
-#define PMCR0_PATCH_SET_2_WITH_LEN ((2 * ARM64_INST_LEN))
+#define HID_PATCH_SET1_WITH_LEN ((HID_PATCH_SET1_LEN))
 
-#define PMCR0_PATCH_SET_2_NAME "PMCR0 Patch Set 2"
+#define HID_PATCH_SET1_NUM_EXPECTED ((2))
 
-#define PMCR0_PATCH_SET_2_NUM_EXPECTED ((2))
+#define HID_PATCH_SET1_NUM_NAME "HID4/ EHID4 Patch 1"
 
-// Note- we don't care about the write in mt_cpu_down as
-// it just turns off the counters before idling. We don't care about
-// the timers when the core is idle!
+
+// --------------- Begin patch set 4 ---------------
+
+// Body of CleanPoC_DcacheRegion_Force_nopreempt on old kernels
+/*
+This sets bit 11 to 1
+ce0175b2   orr     x14, x14, #0x800
+6f0000b5   cbnz    x15, 0xfffffe00072d5600
+2ef418d5   msr     s3_0_c15_c4_1, x14
+02000014   b       0xfffffe00072d5604
+0ef418d5   msr     hid4, x14
+*/
+#define HID_PATCH_SET2 \
+	"\xce\x01\x75\xb2" \
+	"\x6f\x00\x00\xb5" \
+	"\x2e\xf4\x18\xd5" \
+	"\x02\x00\x00\x14" \
+	"\x0e\xf4\x18\xd5"
+
+#define HID_PATCH_SET2_LEN ((5 * ARM64_INST_LEN))
 
 /*
- * Returns true of the substring is present in the image
- */
-bool require_string(uint8_t *target, size_t target_len, uint8_t *find, size_t find_len) {
-	uint8_t *cursor = target;
+Make sure bit 11 is 0
+cef97492   and     x14, x14, #0xfffffffffffff7ff
+6f0000b5   cbnz    x15, 0xfffffe00072d5600
+2ef418d5   msr     s3_0_c15_c4_1, x14
+02000014   b       0xfffffe00072d5604
+0ef418d5   msr     hid4, x14
+*/
+#define HID_PATCH_SET2_WITH \
+	"\xce\xf9\x74\x92" \
+	"\x6f\x00\x00\xb5" \
+	"\x2e\xf4\x18\xd5" \
+	"\x02\x00\x00\x14" \
+	"\x0e\xf4\x18\xd5"
 
-	while (cursor < target + target_len) {
-		if (memcmp(cursor, find, find_len) == 0) {
-			return true;
-		}
+#define HID_PATCH_SET2_WITH_LEN ((HID_PATCH_SET2_LEN))
 
-		cursor ++;
-	}
+#define HID_PATCH_SET2_NUM_EXPECTED ((1))
 
-	return false;
-}
+#define HID_PATCH_SET2_NUM_NAME "HID4/ EHID4 Patch 2"
 
 /*
  * find_and_replace
@@ -180,7 +189,7 @@ void find_and_replace(uint8_t *target, size_t target_len, uint8_t *find, size_t 
 
 		if (num_expected != 0) {
 			if (num_hits > num_expected) {
-				fprintf(stderr, "Found more hits than expected for a patch set. Your kernel might be newer than what we expect (%s). Please update the patch utility and double-check the patch sets are correct for your kernel.\n", MACOS_VERSION);
+				fprintf(stderr, "Found more hits than expected for a patch set. Your kernel might be newer than what we expect. Please update the patch utility and double-check the patch sets are correct for your kernel.\n");
 				exit(EXIT_FAILURE);
 			}
 		}
@@ -190,7 +199,7 @@ void find_and_replace(uint8_t *target, size_t target_len, uint8_t *find, size_t 
 
 	if (num_expected != 0) {
 		if (num_hits != num_expected) {
-			printf("Warning: Found fewer hits than expected for patch %s. This might already be a patched kernel.\n", patch_name);
+			printf("Warning: Found fewer hits than expected for patch %s (got %llu, expected %llu). This might already be a patched kernel.\n", patch_name, num_hits, num_expected);
 		}
 	}
 }
@@ -239,21 +248,6 @@ int main(int argc, char **argv) {
 		return EXIT_FAILURE;
 	}
 
-	// We require that the name string is present before making any patches
-	if (!require_string(patch_kernel, file_size, (uint8_t *)&NAME_STRING_ORIGINAL, strlen(NAME_STRING_ORIGINAL))) {
-
-		// This is a previously patched kernel image!
-		if (require_string(patch_kernel, file_size, (uint8_t *)&NAME_STRING_NEW, strlen(NAME_STRING_NEW))) {
-			printf("This binary has already been patched!\n");
-			return EXIT_SUCCESS;
-		}
-
-		fprintf(stderr, "Your kernel does not contain the expected version string (%s)!\n", NAME_STRING_ORIGINAL);
-		fprintf(stderr, "\nPlease update the PacmanPatcher utility to support your kernel.\n");
-		fprintf(stderr, "\nOr, if you know what you are doing, you can probably just comment this warning out and things might still work (I recommend checking in a disassembler though- see the comments in the code for what the patches do)\n");
-		return EXIT_FAILURE;
-	}
-
 	// Patch the kernel name (for `uname -sra` etc)
 	find_and_replace(
 		patch_kernel,
@@ -270,26 +264,7 @@ int main(int argc, char **argv) {
 		1
 	);
 
-	// CNTKCTL_EL1 timer reg patch (turn on user timer bits)
-	find_and_replace(
-		patch_kernel,
-		file_size,
-		(uint8_t *)&CNTKCTL_PATCH_SET,
-		CNTKCTL_PATCH_LEN,
-		(uint8_t *)&CNTKCTL_PATCH_WITH,
-		CNTKCTL_PATCH_WITH_LEN,
-
-		// We write our patch 4 bytes backwards to overwrite the prior branch
-		// (which in all 4 cases leads to a panic handler we will never hit)
-		CNTKCTL_PATCH_OFFSET,
-		CNTKCTL_PATCH_EXPECTED,
-		CNTKCTL_PATCH_NAME,
-
-		// Increase search in chunks of instruction granularity
-		ARM64_INST_LEN
-	);
-
-	// Apple PMC timer reg patch 1 (turn on user timer bits)
+	// Enable EL0 access to Apple PMC regs
 	find_and_replace(
 		patch_kernel,
 		file_size,
@@ -305,19 +280,45 @@ int main(int argc, char **argv) {
 		ARM64_INST_LEN
 	);
 
-	// Apple PMC timer reg patch 2 (turn on user timer bits)
+	// Remove any code that disables DC MVA ops with ACFG_EL1
 	find_and_replace(
 		patch_kernel,
 		file_size,
-		(uint8_t *)&PMCR0_PATCH_SET_2_FIND,
-		PMCR0_PATCH_SET_2_LEN,
-		(uint8_t *)&PMCR0_PATCH_SET_2_WITH,
-		PMCR0_PATCH_SET_2_WITH_LEN,
+		(uint8_t *)&ACFG_PATCH_SET,
+		ACFG_PATCH_SET_LEN,
+		(uint8_t *)&ACFG_PATCH_SET_WITH,
+		ACFG_PATCH_SET_WITH_LEN,
 		0,
-		PMCR0_PATCH_SET_2_NUM_EXPECTED,
-		PMCR0_PATCH_SET_2_NAME,
+		ACFG_PATCH_SET_NUM_EXPECTED,
+		ACFG_PATCH_SET_NUM_NAME,
+		ARM64_INST_LEN
+	);
 
-		// Increase search in chunks of instruction granularity
+	// Remove any code that disables DC MVA ops with HID4/ EHID4
+	find_and_replace(
+		patch_kernel,
+		file_size,
+		(uint8_t *)&HID_PATCH_SET1,
+		HID_PATCH_SET1_LEN,
+		(uint8_t *)&HID_PATCH_SET1_WITH,
+		HID_PATCH_SET1_WITH_LEN,
+		0,
+		HID_PATCH_SET1_NUM_EXPECTED,
+		HID_PATCH_SET1_NUM_NAME,
+		ARM64_INST_LEN
+	);
+
+	// Remove any code that disables DC MVA ops with HID4/ EHID4 on old kernels
+	find_and_replace(
+		patch_kernel,
+		file_size,
+		(uint8_t *)&HID_PATCH_SET2,
+		HID_PATCH_SET2_LEN,
+		(uint8_t *)&HID_PATCH_SET2_WITH,
+		HID_PATCH_SET2_WITH_LEN,
+		0,
+		HID_PATCH_SET2_NUM_EXPECTED,
+		HID_PATCH_SET2_NUM_NAME,
 		ARM64_INST_LEN
 	);
 
